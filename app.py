@@ -1,7 +1,7 @@
 """
 app.py (Flask version)
 Flask backend for the document-based RAG chatbot powered by Groq.
-Uses rag_engine.py (unchanged) for text extraction, chunking, embeddings, and Groq calls.
+Uses Voyage embeddings for retrieval and Groq for answers.
 
 Run with:
     python app.py
@@ -19,6 +19,7 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+VOYAGE_API_KEY = os.environ.get("VOYAGE_API_KEY")
 
 # In-memory store keyed by session id: { session_id: {"store": VectorStore, "doc_name": str} }
 # NOTE: simple in-memory approach — fine for local/single-user use.
@@ -55,8 +56,8 @@ def upload():
     if not allowed_file(file.filename):
         return jsonify({"error": "Unsupported file type. Use PDF, DOCX, or TXT."}), 400
 
-    if not GROQ_API_KEY:
-        return jsonify({"error": "Server configuration is missing GROQ_API_KEY."}), 500
+    if not GROQ_API_KEY or not VOYAGE_API_KEY:
+        return jsonify({"error": "Server configuration is missing GROQ_API_KEY or VOYAGE_API_KEY."}), 500
 
     try:
         file_bytes = file.read()
@@ -66,7 +67,7 @@ def upload():
             return jsonify({"error": "Couldn't extract any text from this file."}), 400
 
         chunks = chunk_text(text)
-        store = VectorStore()
+        store = VectorStore(api_key=VOYAGE_API_KEY)
         store.build(chunks)
 
         sid = get_session_id()

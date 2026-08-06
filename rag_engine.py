@@ -3,19 +3,17 @@ rag_engine.py
 Core logic for the document-based RAG chatbot:
 - Extract text from PDF / DOCX / TXT
 - Chunk text
-- Build a FAISS vector index using sentence-transformers embeddings
+- Generate embeddings with the Voyage AI Embedding API
 - Retrieve relevant chunks for a question
 - Call Groq's LLM to answer using only the retrieved context
 """
 
-import os
 import io
 import numpy as np
-import faiss
 from pypdf import PdfReader
 from docx import Document as DocxDocument
-from sentence_transformers import SentenceTransformer
 from groq import Groq
+import voyageai
 
 
 # ---------------------------------------------------------------------------
@@ -70,43 +68,70 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 150) -> list[str
 
 
 # ---------------------------------------------------------------------------
-# 3. Embeddings + Vector store (FAISS)
+# 3. Voyage embeddings + in-memory vector store
 # ---------------------------------------------------------------------------
 
 class VectorStore:
-    """Wraps a sentence-transformers embedder + FAISS index for similarity search."""
+    """Stores Voyage embeddings in memory and searches them with cosine similarity."""
 
-    _model_cache = None  # loaded once per process, reused across documents
+    EMBEDDING_MODEL = "voyage-4-lite"
+    EMBEDDING_BATCH_SIZE = 128
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        if VectorStore._model_cache is None:
-            VectorStore._model_cache = SentenceTransformer(model_name)
-        self.model = VectorStore._model_cache
-        self.index = None
+    def __init__(self, api_key: str):
+        if not api_key:
+            raise ValueError("VOYAGE_API_KEY is required to create embeddings.")
+
+        self.client = voyageai.Client(api_key=api_key)
         self.chunks: list[str] = []
+        self.embeddings: np.ndarray | None = None
+
+    @staticmethod
+    def _normalize(vectors: np.ndarray) -> np.ndarray:
+        """L2-normalize rows so a dot product equals cosine similarity."""
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        return vectors / np.maximum(norms, 1e-12)
+
+    def _embed(self, texts: list[str], input_type: str) -> np.ndarray:
+        """Embed text in API-sized batches and return a float32 matrix."""
+        vectors = []
+        for start in range(0, len(texts), self.EMBEDDING_BATCH_SIZE):
+            batch = texts[start:start + self.EMBEDDING_BATCH_SIZE]
+            response = self.client.embed(
+                batch,
+                model=self.EMBEDDING_MODEL,
+                input_type=input_type,
+            )
+            vectors.extend(response.embeddings)
+
+        if len(vectors) != len(texts):
+            raise RuntimeError("Voyage returned an unexpected number of embeddings.")
+
+        return np.asarray(vectors, dtype=np.float32)
 
     def build(self, chunks: list[str]):
-        """Embed chunks and build a FAISS index over them."""
-        self.chunks = chunks
-        embeddings = self.model.encode(chunks, convert_to_numpy=True, show_progress_bar=False)
-        embeddings = embeddings.astype("float32")
-        faiss.normalize_L2(embeddings)  # so inner product == cosine similarity
+        """Embed document chunks and retain the normalized vectors in memory."""
+        if not chunks:
+            self.chunks = []
+            self.embeddings = None
+            return
 
-        dim = embeddings.shape[1]
-        self.index = faiss.IndexFlatIP(dim)
-        self.index.add(embeddings)
+        self.chunks = chunks
+        self.embeddings = self._normalize(
+            self._embed(chunks, input_type="document")
+        )
 
     def search(self, query: str, k: int = 4) -> list[str]:
-        """Return the top-k most relevant chunks for a query."""
-        if self.index is None or not self.chunks:
+        """Return the top-k chunks ranked by cosine similarity to the query."""
+        if self.embeddings is None or not self.chunks:
             return []
 
-        q_emb = self.model.encode([query], convert_to_numpy=True).astype("float32")
-        faiss.normalize_L2(q_emb)
-
         k = min(k, len(self.chunks))
-        scores, idxs = self.index.search(q_emb, k)
-        return [self.chunks[i] for i in idxs[0] if i != -1]
+        query_embedding = self._normalize(
+            self._embed([query], input_type="query")
+        )[0]
+        scores = self.embeddings @ query_embedding
+        top_indices = np.argsort(scores)[-k:][::-1]
+        return [self.chunks[index] for index in top_indices]
 
 
 # ---------------------------------------------------------------------------

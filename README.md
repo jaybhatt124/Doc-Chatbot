@@ -1,11 +1,10 @@
 # Document Q&A Chatbot — Flask + HTML/CSS/JS version
 
-Same RAG engine as the Streamlit app (`rag_engine.py` is unchanged), served through
-a Flask backend with a custom HTML/CSS/JS front end called **Marginal**.
+Flask backend with a custom HTML/CSS/JS front end called **Marginal**.
 
 ## How it works
 
-- `rag_engine.py` — unchanged from the Streamlit version: text extraction (PDF/DOCX/TXT), chunking, FAISS + sentence-transformers vector search, and the Groq LLM call.
+- `rag_engine.py` — text extraction (PDF/DOCX/TXT), chunking, Voyage API embeddings, in-memory NumPy cosine search, and the Groq LLM call.
 - `app.py` — Flask backend exposing three JSON endpoints:
   - `POST /api/upload` — accepts a file, extracts/chunks/indexes it, and stores the index in a per-browser-session dict.
   - `POST /api/ask` — accepts `{question, top_k, model}`, retrieves relevant chunks, asks Groq, returns `{answer, sources}`.
@@ -20,13 +19,13 @@ copy .env.example .env
 python app.py
 ```
 
-Set `GROQ_API_KEY` in `.env` before starting the app. The `.env` file is ignored by Git and is never sent to the browser.
+Set `GROQ_API_KEY` and `VOYAGE_API_KEY` in `.env` before starting the app. The `.env` file is ignored by Git and is never sent to the browser.
 
 Open **http://localhost:5000** in your browser.
 
 ## Usage
 
-1. Add your Groq API key to `.env` (free at https://console.groq.com/keys).
+1. Add your Groq and Voyage API keys to `.env`.
 2. Drag a PDF/DOCX/TXT file into the upload well, or click "browse".
 3. Click **Index document**.
 4. Ask questions in the chat box. Click any excerpt stub under an answer to expand it and see the full retrieved chunk.
