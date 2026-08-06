@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marginal — Document Q&A</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="frame">
+
+  <!-- Sidebar: the shelf -->
+  <aside class="shelf">
+    <div class="shelf-header">
+      <span class="mark">§</span>
+      <h1>Marginal</h1>
+    </div>
+    <p class="tagline">Ask your documents directly.</p>
+
+    <div class="field-group">
+      <label for="model-select">Model</label>
+      <select id="model-select">
+        <option value="llama-3.3-70b-versatile" selected>llama-3.3-70b-versatile</option>
+        <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
+        <option value="gemma2-9b-it">gemma2-9b-it</option>
+      </select>
+    </div>
+
+    <div class="field-group">
+      <label for="topk-range">Excerpts per answer: <span id="topk-value">4</span></label>
+      <input type="range" id="topk-range" min="2" max="8" value="4">
+    </div>
+
+    <div class="upload-well" id="upload-well">
+      <input type="file" id="file-input" accept=".pdf,.docx,.txt" hidden>
+      <div class="well-inner" id="well-inner">
+        <span class="well-icon">⌸</span>
+        <span class="well-text">Drop a file, or <button type="button" id="browse-btn">browse</button></span>
+        <span class="well-sub">PDF · DOCX · TXT</span>
+      </div>
+    </div>
+
+    <button id="process-btn" class="btn-primary" disabled>Index document</button>
+
+    <div id="doc-status" class="doc-status hidden">
+      <span class="status-dot"></span>
+      <div>
+        <div class="status-name" id="status-name"></div>
+        <div class="status-detail" id="status-detail"></div>
+      </div>
+    </div>
+
+    <div id="upload-error" class="error-msg hidden"></div>
+  </aside>
+
+  <!-- Main: the desk -->
+  <main class="desk">
+    <div class="desk-header">
+      <span class="page-label">Reading room</span>
+    </div>
+
+    <div class="feed" id="feed">
+      <div class="empty-state" id="empty-state">
+        <span class="empty-mark">☙</span>
+        <p>Index a document on the left, then ask what you need to know.</p>
+      </div>
+    </div>
+
+    <form class="composer" id="composer">
+      <input type="text" id="question-input" placeholder="Ask something about the document…" autocomplete="off" disabled>
+      <button type="submit" id="ask-btn" disabled>Ask</button>
+    </form>
+  </main>
+
+</div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
