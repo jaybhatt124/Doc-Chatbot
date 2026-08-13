@@ -11,8 +11,8 @@
 </head>
 <body>
   <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">D</span><span>DocChat</span></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-mark">D</span><span>DocChat</span><button type="button" class="sidebar-close" id="sidebar-close" aria-label="Close menu">&times;</button></div>
       <button class="new-chat" id="new-chat-btn" type="button" title="Start a new chat"><span>+</span> New chat</button>
 
       <section class="document-panel">
@@ -52,7 +52,13 @@
     </aside>
 
     <main class="chat-area">
-      <header class="chat-header"><span id="chat-title">New conversation</span><span class="model-status">GROQ</span></header>
+      <header class="chat-header">
+        <span class="header-left">
+          <button type="button" id="menu-btn" class="menu-btn" aria-label="Open menu">&#9776;</button>
+          <span id="chat-title">New conversation</span>
+        </span>
+        <span class="model-status">GROQ</span>
+      </header>
       <div class="conversation" id="feed">
         <section class="welcome" id="empty-state">
           <div class="welcome-logo">D</div>
@@ -74,6 +80,7 @@
       </div>
     </main>
   </div>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

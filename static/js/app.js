@@ -17,6 +17,17 @@ const composer = document.getElementById('composer');
 const questionInput = document.getElementById('question-input');
 const askBtn = document.getElementById('ask-btn');
 const newChatBtn = document.getElementById('new-chat-btn');
+const sidebar = document.getElementById('sidebar');
+const menuBtn = document.getElementById('menu-btn');
+const sidebarClose = document.getElementById('sidebar-close');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+
+function openMenu() { sidebar.classList.add('open'); sidebarBackdrop.classList.add('visible'); }
+function closeMenu() { sidebar.classList.remove('open'); sidebarBackdrop.classList.remove('visible'); }
+menuBtn.addEventListener('click', openMenu);
+sidebarClose.addEventListener('click', closeMenu);
+sidebarBackdrop.addEventListener('click', closeMenu);
+newChatBtn.addEventListener('click', () => { resetChat(); closeMenu(); });
 
 let selectedFile = null;
 let diagramCount = 0;
@@ -63,6 +74,7 @@ processBtn.addEventListener('click', async () => {
     questionInput.placeholder = 'Ask anything about your document...';
     processBtn.textContent = 'Re-index document'; processBtn.disabled = false;
     questionInput.focus();
+    closeMenu();
   } catch (error) { showError(error.message); processBtn.textContent = 'Index document'; processBtn.disabled = false; }
 });
 
