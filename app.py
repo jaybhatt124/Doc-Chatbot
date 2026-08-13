@@ -1,7 +1,7 @@
 """
 app.py (Flask version)
 Flask backend for the document-based RAG chatbot powered by Groq.
-Uses Voyage embeddings for retrieval and Groq for answers.
+Uses in-memory TF-IDF retrieval and Groq for answers.
 
 Run with:
     python app.py
@@ -9,6 +9,8 @@ Then open http://localhost:5000
 """
 
 import os
+import re
+
 from flask import Flask, render_template, request, jsonify, session
 from dotenv import load_dotenv
 
@@ -19,7 +21,6 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-VOYAGE_API_KEY = os.environ.get("VOYAGE_API_KEY")
 
 # In-memory store keyed by session id: { session_id: {"store": VectorStore, "doc_name": str} }
 # NOTE: simple in-memory approach — fine for local/single-user use.
@@ -27,6 +28,24 @@ VOYAGE_API_KEY = os.environ.get("VOYAGE_API_KEY")
 SESSIONS = {}
 
 ALLOWED_EXTENSIONS = {"pdf", "docx", "txt"}
+
+COVERAGE_PATTERNS = (
+    r"\b(?:all|the\s+\d+|\d+|one|two|three|four|five|six|seven|eight|nine|ten|many)\s+types?\b",
+    r"\b(?:types?|kinds?|categories)\s+of\b",
+    r"\bdifferent\s+(?:types?|kinds?|categories)\b",
+    r"\bhow\s+many\s+(?:types?|kinds?|categories)\b",
+    r"\b(list|name|enumerate|mention|explain|describe)\s+all\b",
+    r"\b(list|name|enumerate)\s+(?:the\s+)?(?:different\s+)?(?:types?|kinds?|categories)\b",
+    r"\b(summariz(?:e|ation)|overview|contents)\b",
+    r"\b(?:in detail|detailed|explain thoroughly)\b",
+    r"\bevery\b",
+)
+
+
+def is_coverage_question(question: str) -> bool:
+    """True when the user is asking for a complete list/enumeration of items."""
+    lowered = question.lower()
+    return any(re.search(pattern, lowered) for pattern in COVERAGE_PATTERNS)
 
 
 def allowed_file(filename: str) -> bool:
@@ -56,8 +75,8 @@ def upload():
     if not allowed_file(file.filename):
         return jsonify({"error": "Unsupported file type. Use PDF, DOCX, or TXT."}), 400
 
-    if not GROQ_API_KEY or not VOYAGE_API_KEY:
-        return jsonify({"error": "Server configuration is missing GROQ_API_KEY or VOYAGE_API_KEY."}), 500
+    if not GROQ_API_KEY:
+        return jsonify({"error": "Server configuration is missing GROQ_API_KEY."}), 500
 
     try:
         file_bytes = file.read()
@@ -67,7 +86,7 @@ def upload():
             return jsonify({"error": "Couldn't extract any text from this file."}), 400
 
         chunks = chunk_text(text)
-        store = VectorStore(api_key=VOYAGE_API_KEY)
+        store = VectorStore()
         store.build(chunks)
 
         sid = get_session_id()
@@ -90,7 +109,7 @@ def upload():
 def ask():
     data = request.get_json(silent=True) or {}
     question = data.get("question", "").strip()
-    top_k = int(data.get("top_k", 4))
+    top_k = max(2, min(int(data.get("top_k", 4)), 8))
     model = data.get("model", "llama-3.3-70b-versatile")
 
     if not question:
@@ -104,7 +123,12 @@ def ask():
 
     try:
         store: VectorStore = sess["store"]
-        relevant_chunks = store.search(question, k=top_k)
+        coverage_question = is_coverage_question(question)
+        relevant_chunks = store.search(
+            question,
+            k=20 if coverage_question else top_k,
+            neighbor_count=2 if coverage_question else 0,
+        )
 
         answer = ask_groq(
             question=question,
@@ -115,7 +139,6 @@ def ask():
 
         return jsonify({
             "answer": answer,
-            "sources": relevant_chunks,
         })
 
     except Exception as e:

@@ -3,17 +3,20 @@ rag_engine.py
 Core logic for the document-based RAG chatbot:
 - Extract text from PDF / DOCX / TXT
 - Chunk text
-- Generate embeddings with the Voyage AI Embedding API
+- Build a lightweight TF-IDF index in memory
 - Retrieve relevant chunks for a question
 - Call Groq's LLM to answer using only the retrieved context
 """
 
 import io
+import re
+from collections import Counter
+
 import numpy as np
+import httpx
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 from groq import Groq
-import voyageai
 
 
 # ---------------------------------------------------------------------------
@@ -68,22 +71,17 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 150) -> list[str
 
 
 # ---------------------------------------------------------------------------
-# 3. Voyage embeddings + in-memory vector store
+# 3. TF-IDF + in-memory vector store
 # ---------------------------------------------------------------------------
 
 class VectorStore:
-    """Stores Voyage embeddings in memory and searches them with cosine similarity."""
+    """Stores TF-IDF vectors in memory and searches them with cosine similarity."""
 
-    EMBEDDING_MODEL = "voyage-4-lite"
-    EMBEDDING_BATCH_SIZE = 128
-
-    def __init__(self, api_key: str):
-        if not api_key:
-            raise ValueError("VOYAGE_API_KEY is required to create embeddings.")
-
-        self.client = voyageai.Client(api_key=api_key)
+    def __init__(self):
         self.chunks: list[str] = []
-        self.embeddings: np.ndarray | None = None
+        self.vocabulary: dict[str, int] = {}
+        self.idf: np.ndarray | None = None
+        self.vectors: np.ndarray | None = None
 
     @staticmethod
     def _normalize(vectors: np.ndarray) -> np.ndarray:
@@ -91,47 +89,80 @@ class VectorStore:
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         return vectors / np.maximum(norms, 1e-12)
 
-    def _embed(self, texts: list[str], input_type: str) -> np.ndarray:
-        """Embed text in API-sized batches and return a float32 matrix."""
-        vectors = []
-        for start in range(0, len(texts), self.EMBEDDING_BATCH_SIZE):
-            batch = texts[start:start + self.EMBEDDING_BATCH_SIZE]
-            response = self.client.embed(
-                batch,
-                model=self.EMBEDDING_MODEL,
-                input_type=input_type,
-            )
-            vectors.extend(response.embeddings)
-
-        if len(vectors) != len(texts):
-            raise RuntimeError("Voyage returned an unexpected number of embeddings.")
-
-        return np.asarray(vectors, dtype=np.float32)
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        """Normalize text into simple word tokens for lexical retrieval."""
+        return re.findall(r"[a-z0-9]+", text.lower())
 
     def build(self, chunks: list[str]):
-        """Embed document chunks and retain the normalized vectors in memory."""
+        """Create normalized TF-IDF vectors for the document chunks."""
         if not chunks:
             self.chunks = []
-            self.embeddings = None
+            self.vocabulary = {}
+            self.idf = None
+            self.vectors = None
             return
 
         self.chunks = chunks
-        self.embeddings = self._normalize(
-            self._embed(chunks, input_type="document")
+        tokenized_chunks = [self._tokenize(chunk) for chunk in chunks]
+        document_frequency = Counter(
+            token for tokens in tokenized_chunks for token in set(tokens)
+        )
+        self.vocabulary = {
+            token: index for index, token in enumerate(sorted(document_frequency))
+        }
+        document_count = len(chunks)
+        self.idf = np.asarray(
+            [
+                np.log((1 + document_count) / (1 + document_frequency[token])) + 1
+                for token in self.vocabulary
+            ],
+            dtype=np.float32,
         )
 
-    def search(self, query: str, k: int = 4) -> list[str]:
-        """Return the top-k chunks ranked by cosine similarity to the query."""
-        if self.embeddings is None or not self.chunks:
+        vectors = np.zeros((document_count, len(self.vocabulary)), dtype=np.float32)
+        for row, tokens in enumerate(tokenized_chunks):
+            token_counts = Counter(tokens)
+            token_total = len(tokens) or 1
+            for token, count in token_counts.items():
+                column = self.vocabulary.get(token)
+                if column is not None:
+                    vectors[row, column] = (count / token_total) * self.idf[column]
+
+        self.vectors = self._normalize(vectors)
+
+    def search(self, query: str, k: int = 4, neighbor_count: int = 0) -> list[str]:
+        """Return relevant chunks, optionally including neighboring document sections."""
+        if self.vectors is None or self.idf is None or not self.chunks:
             return []
 
         k = min(k, len(self.chunks))
-        query_embedding = self._normalize(
-            self._embed([query], input_type="query")
-        )[0]
-        scores = self.embeddings @ query_embedding
-        top_indices = np.argsort(scores)[-k:][::-1]
-        return [self.chunks[index] for index in top_indices]
+        query_vector = np.zeros(len(self.vocabulary), dtype=np.float32)
+        query_tokens = self._tokenize(query)
+        token_counts = Counter(query_tokens)
+        token_total = len(query_tokens) or 1
+        for token, count in token_counts.items():
+            column = self.vocabulary.get(token)
+            if column is not None:
+                query_vector[column] = (count / token_total) * self.idf[column]
+
+        query_vector = self._normalize(query_vector.reshape(1, -1))[0]
+        scores = self.vectors @ query_vector
+        ranked_indices = np.argsort(scores)[::-1]
+        if not neighbor_count:
+            return [self.chunks[index] for index in ranked_indices[:k]]
+
+        selected_indices = []
+        selected_set = set()
+        for index in ranked_indices:
+            for candidate in range(index - neighbor_count, index + neighbor_count + 1):
+                if 0 <= candidate < len(self.chunks) and candidate not in selected_set:
+                    selected_indices.append(candidate)
+                    selected_set.add(candidate)
+                    if len(selected_indices) == k:
+                        return [self.chunks[candidate] for candidate in sorted(selected_indices)]
+
+        return [self.chunks[candidate] for candidate in sorted(selected_indices)]
 
 
 # ---------------------------------------------------------------------------
@@ -143,15 +174,59 @@ provided document context. Follow these rules strictly:
 - Answer using only the information in the context below.
 - If the answer is not present in the context, say clearly that the document
   does not contain that information. Do not make anything up.
-- Keep answers concise and directly relevant to the question.
+- Give structured, detailed answers when the user asks for explanation, notes,
+  summary, or contents of a topic, while staying directly relevant.
 - Quote or reference specific parts of the context when helpful.
+- Apply the point-wise, bold-topic format to EVERY answer about ANY topic,
+  never only for one section. Convert every part of the document (definitions,
+  advantages, disadvantages, types, symbols, steps, examples) into bullet
+  points.
+- Never write paragraphs. Always answer point-wise with bullet points ("- ")
+  or numbered points. Each distinct fact goes on its own point. Convert any
+  prose into points.
+- Match the level of detail the user asks for. When the user requests
+  "detail", "in detail", "detailed", or "summarize in detail", expand every
+  point with the full information found in the document: specific examples,
+  all listed items, every advantage/disadvantage, every symbol, and each
+  step. Do not compress facts into vague one-line summaries.
+- When asked to summarize or give an overview, cover the whole document
+  section by section and give each topic detailed points that include the
+  concrete facts and examples from the context.
+- Put every topic name and subtopic name in bold with **asterisks**, e.g.
+  **Linear Flowchart**. Place the bold topic name on its own line, then list
+  its points below it. Never join a topic name and its points on the same
+  line, and never wrap a topic name in markdown heading symbols if you can
+  instead bold it.
+- Example of the required format (only a sample; use the same style for every
+  topic you answer about):
+  **Types of Flowcharts**
+  - Linear (Sequential) Flowchart: Steps are executed one after another in a straight line.
+  - Decision (Selection / Branching) Flowchart: Contains one or more Decision diamonds.
+  - Looping (Repetition / Iteration) Flowchart: A set of steps is repeated until a condition becomes false.
+  - Nested Flowchart: Contains a decision inside another decision or a loop inside another loop.
+- When asked for types, categories, or a complete list, inspect all supplied
+  context and enumerate every distinct item you find. Do not stop after a few
+  examples. If the document states a count, verify the answer contains that
+  same number of items. Never guess missing types or present structures from
+  another topic as types of flowcharts.
+- When the user asks for a flowchart, diagram, process map, or graphical
+  representation, first give a clear detailed explanation, then you MUST
+  provide one valid Mermaid flowchart in a fenced ```mermaid code block.
+  The code block must start with `flowchart TD` and contain nodes plus `-->`
+  arrows; never provide only a list of diagram labels. Use only facts found
+  in the context, keep node labels short, use square-bracket process nodes,
+  and use curly-brace decision nodes only when needed. Make every node
+  accurate and meaningful: include required inputs, the calculation, and the
+  output. For an average-of-three-numbers chart, show: Start, read A/B/C,
+  Sum = A + B + C, Average = Sum / 3, print Average, Stop.
 """
 
 
 def ask_groq(question: str, context_chunks: list[str], api_key: str,
-             model: str = "llama-3.3-70b-versatile") -> str:
+             model: str = "llama-3.3-70b-versatile", max_tokens: int = 2048) -> str:
     """Send the retrieved context + question to Groq's LLM and return the answer."""
-    client = Groq(api_key=api_key)
+    # Connect directly to Groq instead of inheriting a broken system proxy.
+    client = Groq(api_key=api_key, http_client=httpx.Client(trust_env=False))
 
     context = "\n\n---\n\n".join(context_chunks) if context_chunks else "No relevant context found."
 
@@ -169,7 +244,7 @@ Answer the question using only the context above."""
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.2,
-        max_tokens=1024,
+        max_tokens=max_tokens,
     )
 
     return response.choices[0].message.content
