@@ -110,7 +110,7 @@ def ask():
     data = request.get_json(silent=True) or {}
     question = data.get("question", "").strip()
     top_k = max(2, min(int(data.get("top_k", 4)), 8))
-    model = data.get("model", "llama-3.3-70b-versatile")
+    model = data.get("model", "openai/gpt-oss-120b")
 
     if not question:
         return jsonify({"error": "Question is required"}), 400

@@ -223,7 +223,7 @@ provided document context. Follow these rules strictly:
 
 
 def ask_groq(question: str, context_chunks: list[str], api_key: str,
-             model: str = "llama-3.3-70b-versatile", max_tokens: int = 2048) -> str:
+             model: str = "openai/gpt-oss-120b", max_tokens: int = 2048) -> str:
     """Send the retrieved context + question to Groq's LLM and return the answer."""
     # Connect directly to Groq instead of inheriting a broken system proxy.
     client = Groq(api_key=api_key, http_client=httpx.Client(trust_env=False))
