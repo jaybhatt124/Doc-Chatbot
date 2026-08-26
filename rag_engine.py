@@ -1,7 +1,7 @@
 """
 rag_engine.py
 Core logic for the document-based RAG chatbot:
-- Extract text from PDF / DOCX / TXT
+- Extract text from PDF / DOCX / TXT / Images (OCR)
 - Chunk text
 - Build a lightweight TF-IDF index in memory
 - Retrieve relevant chunks for a question
@@ -18,13 +18,41 @@ from pypdf import PdfReader
 from docx import Document as DocxDocument
 from groq import Groq
 
+IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif"}
+
+_ocr_engine = None
+
+def _get_ocr_engine():
+    """Lazy-load RapidOCR engine (lightweight, fast, no GPU needed)."""
+    global _ocr_engine
+    if _ocr_engine is None:
+        from rapidocr_onnxruntime import RapidOCR
+        _ocr_engine = RapidOCR()
+    return _ocr_engine
+
+
+def extract_text_from_image(file_bytes: bytes) -> str:
+    """Extract text from an image using RapidOCR (ONNX Runtime)."""
+    import tempfile, os
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    try:
+        tmp.write(file_bytes)
+        tmp.close()
+        engine = _get_ocr_engine()
+        result, _ = engine(tmp.name)
+        if result:
+            return "\n".join(line[1] for line in result).strip()
+        return ""
+    finally:
+        os.unlink(tmp.name)
+
 
 # ---------------------------------------------------------------------------
 # 1. Text extraction
 # ---------------------------------------------------------------------------
 
 def extract_text(file_bytes: bytes, filename: str) -> str:
-    """Extract raw text from an uploaded PDF, DOCX, or TXT file."""
+    """Extract raw text from an uploaded PDF, DOCX, TXT, or image file."""
     ext = filename.lower().split(".")[-1]
 
     if ext == "pdf":
@@ -38,8 +66,17 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
     elif ext == "txt":
         text = file_bytes.decode("utf-8", errors="ignore")
 
+    elif ext in IMAGE_EXTENSIONS:
+        text = extract_text_from_image(file_bytes)
+
     else:
         raise ValueError(f"Unsupported file type: .{ext}")
+
+    if not text or not text.strip():
+        raise ValueError(
+            "Could not extract any text from this file. "
+            "For images, ensure the image contains readable printed text."
+        )
 
     return text.strip()
 
@@ -192,6 +229,12 @@ provided document context. Follow these rules strictly:
 - When asked to summarize or give an overview, cover the whole document
   section by section and give each topic detailed points that include the
   concrete facts and examples from the context.
+- When the user asks to compare, differentiate, or wants a difference table,
+  use a markdown table with | pipe | syntax. Include column headers and
+  separator rows. Example:
+  | Feature | Option A | Option B |
+  |---------|----------|----------|
+  | Speed | Fast | Slow |
 - Put every topic name and subtopic name in bold with **asterisks**, e.g.
   **Linear Flowchart**. Place the bold topic name on its own line, then list
   its points below it. Never join a topic name and its points on the same

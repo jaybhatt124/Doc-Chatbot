@@ -44,7 +44,7 @@ document.querySelectorAll('[data-prompt]').forEach((button) => button.addEventLi
 
 function setSelectedFile(file) {
   const extension = file.name.split('.').pop().toLowerCase();
-  if (!['pdf', 'docx', 'txt'].includes(extension)) return showError('Use a PDF, DOCX, or TXT file.');
+  if (!['pdf', 'docx', 'txt', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'tif'].includes(extension)) return showError('Use a PDF, DOCX, TXT, or image file (PNG, JPG, JPEG, WEBP).');
   selectedFile = file;
   selectedFileName.textContent = file.name;
   selectedFileEl.classList.remove('hidden');
@@ -154,6 +154,35 @@ function renderMarkdown(container, text) {
       const list = document.createElement(restOrdered ? 'ol' : 'ul');
       rest.forEach((line) => { const item = document.createElement('li'); appendInlineText(item, line.replace(restOrdered ? /^\d+[.)]\s+/ : /^[-*]\s+/, '')); list.appendChild(item); });
       container.appendChild(list); return;
+    }
+    const tableLines = lines.filter((l) => l.trim().startsWith('|'));
+    if (tableLines.length >= 2) {
+      const preTable = lines.filter((l) => !l.trim().startsWith('|')).filter(Boolean);
+      preTable.forEach((line) => {
+        const h = line.match(/^#{1,3}\s+(.+)$/);
+        if (h) { const el = document.createElement('h3'); el.textContent = h[1]; container.appendChild(el); }
+        else if (/^\*\*(.+)\*\*\s*$/.test(line)) { const p = document.createElement('p'); p.className = 'bold-topic'; const s = document.createElement('strong'); s.textContent = line.replace(/^\*\*|\*\*$/g, ''); p.appendChild(s); container.appendChild(p); }
+        else { const p = document.createElement('p'); appendInlineText(p, line); container.appendChild(p); }
+      });
+      const rows = tableLines.map((l) => l.split('|').slice(1, -1).map((c) => c.trim()));
+      const isSep = (r) => r.every((c) => /^[-:]+$/.test(c));
+      let headerIdx = 0;
+      if (rows.length > 1 && isSep(rows[1])) headerIdx = 1;
+      const header = rows[0];
+      const dataStart = headerIdx + 1;
+      const table = document.createElement('table'); table.className = 'md-table';
+      const thead = document.createElement('thead');
+      const htr = document.createElement('tr');
+      header.forEach((h) => { const th = document.createElement('th'); appendInlineText(th, h); htr.appendChild(th); });
+      thead.appendChild(htr); table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      for (let i = dataStart; i < rows.length; i++) {
+        if (isSep(rows[i])) continue;
+        const tr = document.createElement('tr');
+        rows[i].forEach((c) => { const td = document.createElement('td'); appendInlineText(td, c); tr.appendChild(td); });
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody); container.appendChild(table); return;
     }
     const paragraph = document.createElement('p'); appendInlineText(paragraph, lines.join(' ')); container.appendChild(paragraph);
   });

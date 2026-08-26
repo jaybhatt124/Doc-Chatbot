@@ -27,7 +27,7 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 # For multi-user production use, back this with redis or similar.
 SESSIONS = {}
 
-ALLOWED_EXTENSIONS = {"pdf", "docx", "txt"}
+ALLOWED_EXTENSIONS = {"pdf", "docx", "txt", "png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif"}
 
 COVERAGE_PATTERNS = (
     r"\b(?:all|the\s+\d+|\d+|one|two|three|four|five|six|seven|eight|nine|ten|many)\s+types?\b",
@@ -73,7 +73,7 @@ def upload():
         return jsonify({"error": "No file selected"}), 400
 
     if not allowed_file(file.filename):
-        return jsonify({"error": "Unsupported file type. Use PDF, DOCX, or TXT."}), 400
+            return jsonify({"error": "Unsupported file type. Use PDF, DOCX, TXT, or image files (PNG, JPG, JPEG, WEBP)."}), 400
 
     if not GROQ_API_KEY:
         return jsonify({"error": "Server configuration is missing GROQ_API_KEY."}), 500
