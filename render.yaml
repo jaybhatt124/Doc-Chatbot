@@ -1,6 +1,6 @@
 services:
   - type: web
     name: doc-chatbot
-    runtime: python
-    buildCommand: apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 && pip install -r requirements.txt
-    startCommand: python app.py
+    runtime: image
+    image:
+      url: .
