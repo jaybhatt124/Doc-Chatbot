@@ -1,6 +1,0 @@
-services:
-  - type: web
-    name: doc-chatbot
-    runtime: image
-    image:
-      url: .
